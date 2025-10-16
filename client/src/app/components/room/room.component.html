@@ -1,0 +1,112 @@
+<div class="bg-white rounded-lg shadow-md p-6">
+  <!-- Header -->
+  <div class="flex justify-between items-center mb-6">
+    <h2 class="text-2xl font-bold text-gray-800">
+      Phòng họp: {{ roomId }}
+    </h2>
+    <div class="flex gap-2">
+      <button
+        *ngIf="isHost"
+        (click)="endRoom()"
+        class="btn-danger"
+      >
+        Kết thúc phòng
+      </button>
+      <button
+        (click)="leaveRoom()"
+        class="btn-secondary"
+      >
+        Rời phòng
+      </button>
+    </div>
+  </div>
+
+  <!-- Waiting Room -->
+  <div *ngIf="isInWaitingRoom" class="waiting-room">
+    <h3 class="text-lg font-semibold text-yellow-800 mb-2">
+      Bạn đang trong phòng chờ
+    </h3>
+    <p class="text-yellow-700">
+      Vui lòng chờ chủ phòng phê duyệt để tham gia cuộc họp.
+    </p>
+  </div>
+
+  <!-- Host Controls -->
+  <div *ngIf="isHost && !isInWaitingRoom" class="host-controls">
+    <h3 class="text-lg font-semibold mb-4 text-gray-700">
+      Danh sách chờ phê duyệt ({{ waitingList.length }})
+    </h3>
+    <div *ngIf="waitingList.length === 0" class="text-gray-500 italic">
+      Không có ai trong phòng chờ
+    </div>
+    <div *ngFor="let user of waitingList" class="waiting-user">
+      <span class="text-gray-700">{{ user.name }}</span>
+      <button
+        (click)="approveUser(user.id)"
+        class="btn-approve"
+      >
+        Phê duyệt
+      </button>
+    </div>
+  </div>
+
+  <!-- Video Area -->
+  <div *ngIf="!isInWaitingRoom" class="video-area">
+    <div class="video-grid">
+      <!-- Local Video -->
+      <div class="video-container">
+        <video
+          #localVideo
+          autoplay
+          muted
+          playsinline
+          class="video-element"
+        ></video>
+        <div class="video-label">
+          {{ userName }} (Bạn)
+        </div>
+      </div>
+
+      <!-- Remote Videos -->
+      <div
+        *ngFor="let participant of participants"
+        class="video-container"
+      >
+        <video
+          #remoteVideo
+          autoplay
+          playsinline
+          class="video-element"
+        ></video>
+        <div class="video-label">
+          {{ participant.name }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div *ngIf="!isInWaitingRoom" class="controls">
+    <button
+      (click)="toggleMute()"
+      [class]="isMuted ? 'control-btn muted' : 'control-btn'"
+      [title]="isMuted ? 'Bật mic' : 'Tắt mic'"
+    >
+      {{ isMuted ? '🎤' : '🔇' }}
+    </button>
+    
+    <button
+      (click)="toggleVideo()"
+      [class]="!isVideoOn ? 'control-btn' : 'control-btn'"
+      [title]="isVideoOn ? 'Tắt camera' : 'Bật camera'"
+    >
+      {{ isVideoOn ? '📹' : '📷' }}
+    </button>
+  </div>
+
+  <!-- Error message -->
+  <div *ngIf="errorMessage" class="error-message">
+    {{ errorMessage }}
+  </div>
+</div>
+
