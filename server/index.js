@@ -8,7 +8,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+  origin: ['http://localhost:4200', 'http://127.0.0.1:4200'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Initialize Azure Communication Service
