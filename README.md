@@ -47,14 +47,34 @@ cd ../client && npm install
 
 ### 3. Chạy ứng dụng
 
+**Cách 1: Chạy tự động (Khuyến nghị)**
 ```bash
-# Chạy cả frontend và backend
-npm run dev
+# Windows
+start-dev.bat
 
-# Hoặc chạy riêng lẻ
-npm run server  # Backend trên port 3000
-npm run client  # Frontend trên port 4200
+# Linux/Mac
+chmod +x start-dev.sh
+./start-dev.sh
 ```
+
+**Cách 2: Chạy thủ công**
+```bash
+# Terminal 1: Backend
+cd server && npm start
+
+# Terminal 2: Frontend (sau khi backend đã chạy)
+cd client && npm start
+```
+
+**Cách 3: Sử dụng npm scripts**
+```bash
+npm run dev
+```
+
+**Lưu ý:** 
+- Backend phải chạy trước frontend
+- Frontend sử dụng proxy để gọi API, không cần lo lắng về CORS
+- Nếu gặp lỗi `ECONNREFUSED`, kiểm tra xem backend đã chạy chưa
 
 ## Sử dụng
 
