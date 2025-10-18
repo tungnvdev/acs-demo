@@ -17,6 +17,38 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  const url = req.url;
+  const ip = req.ip || req.connection.remoteAddress;
+  
+  console.log(`[${timestamp}] ${method} ${url} - IP: ${ip}`);
+  
+  // Log request body for POST/PUT requests
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log(`[${timestamp}] Request Body:`, JSON.stringify(req.body, null, 2));
+  }
+  
+  // Log response when it's sent
+  const originalSend = res.send;
+  res.send = function(data) {
+    console.log(`[${timestamp}] Response Status: ${res.statusCode}`);
+    if (data) {
+      try {
+        const responseData = JSON.parse(data);
+        console.log(`[${timestamp}] Response Body:`, JSON.stringify(responseData, null, 2));
+      } catch (e) {
+        console.log(`[${timestamp}] Response Body:`, data);
+      }
+    }
+    originalSend.call(this, data);
+  };
+  
+  next();
+});
+
 // Initialize Azure Communication Service
 const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
 if (!connectionString) {
