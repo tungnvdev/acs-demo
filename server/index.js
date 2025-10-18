@@ -188,7 +188,54 @@ app.post('/api/rooms/:roomId/approve/:userId', (req, res) => {
   room.waitingList.delete(userId);
   room.participants.set(userId, user);
   
-  res.json({ success: true });
+  // Mark user as approved
+  user.isApproved = true;
+  user.approvedAt = new Date();
+  
+  res.json({ 
+    success: true, 
+    message: 'User approved successfully',
+    user: {
+      id: user.id,
+      name: user.name,
+      isApproved: true,
+      approvedAt: user.approvedAt
+    }
+  });
+});
+
+// Check user approval status
+app.get('/api/rooms/:roomId/user/:userId/status', (req, res) => {
+  const { roomId, userId } = req.params;
+  const room = rooms.get(roomId);
+  
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  // Check if user is in participants (approved)
+  const participant = room.participants.get(userId);
+  if (participant) {
+    return res.json({
+      isApproved: true,
+      isInRoom: true,
+      user: participant
+    });
+  }
+  
+  // Check if user is still in waiting list
+  const waitingUser = room.waitingList.get(userId);
+  if (waitingUser) {
+    return res.json({
+      isApproved: false,
+      isInRoom: false,
+      isWaiting: true,
+      user: waitingUser
+    });
+  }
+  
+  // User not found
+  return res.status(404).json({ error: 'User not found' });
 });
 
 // Get waiting list

@@ -38,4 +38,8 @@ export class ApiService {
   leaveRoom(roomId: string, userId: string): Observable<any> {
     return this.http.post(`${this.baseUrl}/rooms/${roomId}/leave/${userId}`, {});
   }
+
+  checkUserStatus(roomId: string, userId: string): Observable<any> {
+    return this.http.get(`${this.baseUrl}/rooms/${roomId}/user/${userId}/status`);
+  }
 }

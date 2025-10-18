@@ -111,14 +111,28 @@ export class RoomComponent implements OnInit, OnDestroy {
   private startWaitingRoomPolling() {
     setInterval(async () => {
       try {
-        const response = await this.apiService.getRoom(this.roomId).toPromise();
-        if (response && !response.isActive) {
-          this.router.navigate(['/']);
+        // Check if user is still in waiting room or has been approved
+        const status = await this.apiService.checkUserStatus(this.roomId, this.identity).toPromise();
+        
+        if (status.isApproved && status.isInRoom) {
+          // User has been approved, move them to the room
+          this.isInWaitingRoom = false;
+          console.log('User has been approved and can join the room!');
+          // You can add logic here to start the video call
+        } else if (status.isWaiting) {
+          // User is still waiting
+          console.log('User is still waiting for approval...');
+        } else {
+          // User not found or room not active
+          const response = await this.apiService.getRoom(this.roomId).toPromise();
+          if (response && !response.isActive) {
+            this.router.navigate(['/']);
+          }
         }
       } catch (error) {
-        console.error('Error polling room status:', error);
+        console.error('Error polling user status:', error);
       }
-    }, 5000);
+    }, 2000); // Check every 2 seconds
   }
 
   private startRoomPolling() {
