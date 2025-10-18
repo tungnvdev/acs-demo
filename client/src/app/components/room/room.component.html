@@ -61,32 +61,65 @@
     <div class="video-grid">
       <!-- Local Video -->
       <div class="video-container">
-        <video
-          #localVideo
-          autoplay
-          muted
-          playsinline
+        <div
+          id="localVideo"
           class="video-element"
-        ></video>
+        ></div>
         <div class="video-label">
           {{ userName }} (Bạn)
         </div>
       </div>
 
-      <!-- Remote Videos -->
-      <div
-        *ngFor="let participant of participants"
-        class="video-container"
-      >
-        <video
-          #remoteVideo
-          autoplay
-          playsinline
-          class="video-element"
-        ></video>
-        <div class="video-label">
-          {{ participant.name }}
-        </div>
+      <!-- Remote Videos Container -->
+      <div id="remoteVideos" class="remote-videos-container">
+        <!-- Remote videos will be dynamically added here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Selection -->
+  <div *ngIf="!isInWaitingRoom" class="device-selection">
+    <button
+      (click)="toggleDeviceSelection()"
+      class="device-btn"
+      [title]="isDeviceSelectionVisible ? 'Ẩn cài đặt thiết bị' : 'Hiện cài đặt thiết bị'"
+    >
+      ⚙️ {{ isDeviceSelectionVisible ? 'Ẩn cài đặt' : 'Cài đặt thiết bị' }}
+    </button>
+    
+    <div *ngIf="isDeviceSelectionVisible" class="device-options">
+      <div class="device-group">
+        <label for="cameraSelect" class="device-label">Camera:</label>
+        <select
+          id="cameraSelect"
+          [(ngModel)]="selectedCameraId"
+          (change)="onCameraChange()"
+          class="device-select"
+        >
+          <option
+            *ngFor="let camera of availableCameras"
+            [value]="camera.id"
+          >
+            {{ camera.name }}
+          </option>
+        </select>
+      </div>
+      
+      <div class="device-group">
+        <label for="microphoneSelect" class="device-label">Microphone:</label>
+        <select
+          id="microphoneSelect"
+          [(ngModel)]="selectedMicrophoneId"
+          (change)="onMicrophoneChange()"
+          class="device-select"
+        >
+          <option
+            *ngFor="let microphone of availableMicrophones"
+            [value]="microphone.id"
+          >
+            {{ microphone.name }}
+          </option>
+        </select>
       </div>
     </div>
   </div>
@@ -108,6 +141,7 @@
     >
       {{ isVideoOn ? '📹' : '📷' }}
     </button>
+
   </div>
 
   <!-- Error message -->

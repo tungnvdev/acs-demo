@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { CallClient, CallAgent, DeviceManager, LocalVideoStream, LocalAudioStream } from '@azure/communication-calling';
+import { CallClient, CallAgent, DeviceManager, LocalVideoStream, LocalAudioStream, VideoStreamRenderer } from '@azure/communication-calling';
 import { AzureCommunicationTokenCredential } from '@azure/communication-common';
 
 export interface User {
@@ -34,6 +34,7 @@ export class CommunicationService {
     const tokenCredential = new AzureCommunicationTokenCredential(token);
     this.callAgent = await this.callClient.createCallAgent(tokenCredential);
     this.deviceManager = await this.callClient.getDeviceManager();
+    await this.deviceManager.askDevicePermission({ audio: true, video: true });
   }
 
   async getCameras() {
@@ -79,7 +80,10 @@ export class CommunicationService {
       audioOptions: localAudioStream ? { localAudioStreams: [localAudioStream] } : undefined
     };
 
-    this.currentCall = this.callAgent.join({ groupId: roomId }, callOptions);
+    this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
+    await this.currentCall.startVideo(localVideoStream);
+    // Set up event handlers for video streams
+    this.setupVideoEventHandlers();
     
     return this.currentCall;
   }
@@ -87,10 +91,50 @@ export class CommunicationService {
   async startCall(roomId: string, localVideoStream?: LocalVideoStream, localAudioStream?: LocalAudioStream) {
     if (!this.callAgent) throw new Error('Call agent not initialized');
 
-    // For group calls, we need to use join instead of startCall
-    this.currentCall = this.callAgent.join({ groupId: roomId });
+    const callOptions: any = {
+      videoOptions: localVideoStream ? { localVideoStreams: [localVideoStream] } : undefined,
+      audioOptions: localAudioStream ? { localAudioStreams: [localAudioStream] } : undefined
+    };
+
+    this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
+    await this.currentCall.startVideo(localVideoStream);
+    // Set up event handlers for video streams
+    this.setupVideoEventHandlers();
     
     return this.currentCall;
+  }
+
+  private setupVideoEventHandlers() {
+    if (!this.currentCall) return;
+
+    // Handle call state changes
+    this.currentCall.on('stateChanged', (e: any) => {
+      console.log('Call state changed:', e);
+    });
+
+    // Handle remote participants
+    this.currentCall.on('remoteParticipantsUpdated', (e: any) => {
+      console.log('Remote participants updated:', e);
+      e.added.forEach((participant: any) => {
+        console.log('Added remote participant:', participant);
+        this.setupParticipantEventHandlers(participant);
+      });
+    });
+  }
+
+  private setupParticipantEventHandlers(participant: any) {
+    // Handle participant video streams
+    participant.on('videoStreamsUpdated', (e: any) => {
+      console.log('Participant video streams updated:', e);
+      e.added.forEach((stream: any) => {
+        console.log('Added participant video stream:', stream);
+      });
+    });
+
+    // Handle participant state changes
+    participant.on('stateChanged', (e: any) => {
+      console.log('Participant state changed:', e);
+    });
   }
 
   async toggleMute(): Promise<boolean> {
@@ -166,4 +210,5 @@ export class CommunicationService {
   getLocalAudioStream() {
     return this.localAudioStream;
   }
+
 }

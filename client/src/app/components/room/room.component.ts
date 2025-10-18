@@ -1,13 +1,15 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { CommunicationService } from '../../services/communication.service';
 import { ApiService } from '../../services/api.service';
+import { VideoStreamRenderer } from '@azure/communication-calling';
 
 @Component({
   selector: 'app-room',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './room.component.html',
   styleUrls: ['./room.component.scss']
 })
@@ -22,9 +24,18 @@ export class RoomComponent implements OnInit, OnDestroy {
   waitingList: any[] = [];
   errorMessage = '';
 
+  // Device selection
+  availableCameras: any[] = [];
+  availableMicrophones: any[] = [];
+  selectedCameraId = '';
+  selectedMicrophoneId = '';
+  isDeviceSelectionVisible = false;
+
   private token = '';
   private identity = '';
   private currentCall: any = null;
+  private waitingRoomPollingInterval: any = null;
+  private roomPollingInterval: any = null;
 
   constructor(
     private route: ActivatedRoute,
@@ -44,7 +55,18 @@ export class RoomComponent implements OnInit, OnDestroy {
       this.isHost = params['isHost'] === 'true';
       this.userName = params['userName'];
       this.isInWaitingRoom = params['isInWaitingRoom'] === 'true';
+      
+      // Get selected devices from query params
+      if (params['selectedCameraId']) {
+        this.selectedCameraId = params['selectedCameraId'];
+      }
+      if (params['selectedMicrophoneId']) {
+        this.selectedMicrophoneId = params['selectedMicrophoneId'];
+      }
     });
+
+    // Load available devices
+    await this.loadAvailableDevices();
 
     if (this.isInWaitingRoom) {
       this.startWaitingRoomPolling();
@@ -54,8 +76,89 @@ export class RoomComponent implements OnInit, OnDestroy {
   }
 
   async ngOnDestroy() {
+    // Stop all polling
+    this.stopWaitingRoomPolling();
+    this.stopRoomPolling();
+    
+    // Leave call if active
     if (this.currentCall) {
       await this.communicationService.leaveCall();
+    }
+  }
+
+  async loadAvailableDevices() {
+    try {
+      // Initialize communication service first
+      await this.communicationService.initialize(this.token);
+      
+      // Get available devices
+      const cameras = await this.communicationService.getCameras();
+      const microphones = await this.communicationService.getMicrophones();
+      
+      this.availableCameras = cameras.map((camera: any) => ({
+        id: camera.id,
+        name: camera.name || `Camera ${camera.id.substring(0, 8)}`
+      }));
+      
+      this.availableMicrophones = microphones.map((mic: any) => ({
+        id: mic.id,
+        name: mic.name || `Microphone ${mic.id.substring(0, 8)}`
+      }));
+      
+      // Set selections - prioritize passed device IDs, fallback to first available
+      if (this.availableCameras.length > 0) {
+        if (!this.selectedCameraId || !this.availableCameras.find(c => c.id === this.selectedCameraId)) {
+          this.selectedCameraId = this.availableCameras[0].id;
+        }
+      }
+      if (this.availableMicrophones.length > 0) {
+        if (!this.selectedMicrophoneId || !this.availableMicrophones.find(m => m.id === this.selectedMicrophoneId)) {
+          this.selectedMicrophoneId = this.availableMicrophones[0].id;
+        }
+      }
+      
+      console.log('Available cameras:', this.availableCameras);
+      console.log('Available microphones:', this.availableMicrophones);
+      console.log('Selected camera ID:', this.selectedCameraId);
+      console.log('Selected microphone ID:', this.selectedMicrophoneId);
+    } catch (error) {
+      console.error('Error loading devices:', error);
+      this.errorMessage = 'Không thể tải danh sách thiết bị. Vui lòng thử lại.';
+    }
+  }
+
+  toggleDeviceSelection() {
+    this.isDeviceSelectionVisible = !this.isDeviceSelectionVisible;
+  }
+
+  async onCameraChange() {
+    console.log('Camera changed to:', this.selectedCameraId);
+    // Reinitialize call with new camera if call is active
+    if (this.currentCall && !this.isInWaitingRoom) {
+      await this.reinitializeCall();
+    }
+  }
+
+  async onMicrophoneChange() {
+    console.log('Microphone changed to:', this.selectedMicrophoneId);
+    // Reinitialize call with new microphone if call is active
+    if (this.currentCall && !this.isInWaitingRoom) {
+      await this.reinitializeCall();
+    }
+  }
+
+  async reinitializeCall() {
+    try {
+      // Leave current call
+      if (this.currentCall) {
+        await this.communicationService.leaveCall();
+      }
+      
+      // Reinitialize with new devices
+      await this.initializeCall();
+    } catch (error) {
+      console.error('Error reinitializing call:', error);
+      this.errorMessage = 'Không thể thay đổi thiết bị. Vui lòng thử lại.';
     }
   }
 
@@ -73,18 +176,44 @@ export class RoomComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Start local streams
-      const localVideoStream = await this.communicationService.startVideo(cameras[0]);
-      const localAudioStream = await this.communicationService.startAudio(microphones[0]);
+      // Find selected devices
+      const selectedCamera = cameras.find(c => c.id === this.selectedCameraId) || cameras[0];
+      const selectedMicrophone = microphones.find(m => m.id === this.selectedMicrophoneId) || microphones[0];
 
-      // Join or start call
+      // Start local streams with selected devices
+      console.log('Starting video with camera:', selectedCamera);
+      console.log('Starting audio with microphone:', selectedMicrophone);
+      
+      const localVideoStream = await this.communicationService.startVideo(selectedCamera);
+      const localAudioStream = await this.communicationService.startAudio(selectedMicrophone);
+      
+      console.log('Local video stream created:', localVideoStream);
+      console.log('Local audio stream created:', localAudioStream);
+
+      // Join or start call first
       if (this.isHost) {
         this.currentCall = await this.communicationService.startCall(this.roomId, localVideoStream, localAudioStream);
       } else {
         this.currentCall = await this.communicationService.joinCall(this.roomId, localVideoStream, localAudioStream);
       }
 
+      console.log('Call established:', this.currentCall);
+
+      // Set up event handlers first
       this.setupCallEventHandlers();
+
+      // Wait for call to be in connected state before rendering video
+      this.waitForCallConnected().then(async () => {
+        console.log('Call is connected, rendering local video...');
+        await this.renderLocalVideo(localVideoStream);
+      });
+
+      // Also try to render video immediately as fallback
+      setTimeout(async () => {
+        console.log('Fallback: Attempting to render video after 2 seconds...');
+        await this.renderLocalVideo(localVideoStream);
+      }, 2000);
+
       this.startRoomPolling();
 
     } catch (error) {
@@ -93,14 +222,91 @@ export class RoomComponent implements OnInit, OnDestroy {
     }
   }
 
+  private waitForCallConnected(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.currentCall) {
+        resolve();
+        return;
+      }
+
+      // Check if already connected
+      if (this.currentCall.state === 'Connected') {
+        resolve();
+        return;
+      }
+
+      // Wait for state change to Connected
+      const stateChangeHandler = (e: any) => {
+        console.log('Call state changed:', e);
+        if (e.state === 'Connected') {
+          this.currentCall.off('stateChanged', stateChangeHandler);
+          resolve();
+        }
+      };
+
+      this.currentCall.on('stateChanged', stateChangeHandler);
+
+      // Fallback timeout after 10 seconds
+      setTimeout(() => {
+        this.currentCall?.off('stateChanged', stateChangeHandler);
+        console.warn('Call connection timeout, proceeding with video render');
+        resolve();
+      }, 10000);
+    });
+  }
+
+  private async renderLocalVideo(localVideoStream: any) {
+    try {
+      console.log('Attempting to render local video...');
+      console.log('Local video stream:', localVideoStream);
+      
+      // Get the preview container
+      const previewContainer = document.getElementById('localVideo');
+      console.log('Preview container found:', !!previewContainer);
+      
+      if (previewContainer && localVideoStream) {
+        // Clear any existing content
+        previewContainer.innerHTML = '';
+        
+        console.log('Creating VideoStreamRenderer...');
+        // Create video stream renderer
+        const renderer = new VideoStreamRenderer(localVideoStream);
+        console.log('VideoStreamRenderer created:', renderer);
+        
+        console.log('Creating view...');
+        const view = await renderer.createView();
+        console.log('View created:', view);
+        
+        // Append the view to the container
+        previewContainer.appendChild(view.target);
+        console.log('View appended to container');
+        
+        console.log('Local video stream rendered successfully');
+      } else {
+        console.warn('Local video container or stream not found');
+        console.warn('Container:', previewContainer);
+        console.warn('Stream:', localVideoStream);
+      }
+    } catch (error) {
+      console.error('Error rendering local video:', error);
+      this.errorMessage = 'Không thể hiển thị video. Vui lòng thử lại.';
+    }
+  }
+
   private setupCallEventHandlers() {
     if (!this.currentCall) return;
 
     this.currentCall.on('remoteParticipantsUpdated', (e: any) => {
+      console.log('Remote participants updated:', e);
       this.participants = e.added.map((p: any) => ({
         id: p.identifier.communicationUserId,
         name: p.displayName || 'Unknown'
       }));
+
+      // Handle video streams for each participant
+      e.added.forEach((participant: any) => {
+        this.setupParticipantVideoHandlers(participant);
+      });
     });
 
     this.currentCall.on('stateChanged', (e: any) => {
@@ -108,8 +314,61 @@ export class RoomComponent implements OnInit, OnDestroy {
     });
   }
 
+  private setupParticipantVideoHandlers(participant: any) {
+    participant.on('videoStreamsUpdated', (e: any) => {
+      console.log('Participant video streams updated:', e);
+      e.added.forEach((stream: any) => {
+        this.renderRemoteVideo(stream, participant.identifier.communicationUserId);
+      });
+    });
+  }
+
+  private async renderRemoteVideo(remoteVideoStream: any, participantId: string) {
+    try {
+      // Check if video container already exists
+      let videoContainerDiv = document.getElementById(`remoteVideo-${participantId}`);
+      
+      if (!videoContainerDiv) {
+        // Create a new video container for remote participant
+        const remoteVideosContainer = document.getElementById('remoteVideos');
+        if (remoteVideosContainer) {
+          videoContainerDiv = document.createElement('div');
+          videoContainerDiv.id = `remoteVideo-${participantId}`;
+          videoContainerDiv.className = 'video-container';
+          
+          // Add label
+          const label = document.createElement('div');
+          label.className = 'video-label';
+          label.textContent = `Participant ${participantId.substring(0, 8)}`;
+          
+          videoContainerDiv.appendChild(label);
+          remoteVideosContainer.appendChild(videoContainerDiv);
+        }
+      }
+      
+      if (videoContainerDiv && remoteVideoStream) {
+        // Clear any existing video content
+        const existingVideo = videoContainerDiv.querySelector('video');
+        if (existingVideo) {
+          existingVideo.remove();
+        }
+        
+        // Create video stream renderer
+        const renderer = new VideoStreamRenderer(remoteVideoStream);
+        const view = await renderer.createView();
+        
+        // Append the view to the container
+        videoContainerDiv.appendChild(view.target);
+        
+        console.log(`Remote video stream rendered for participant: ${participantId}`);
+      }
+    } catch (error) {
+      console.error('Error rendering remote video:', error);
+    }
+  }
+
   private startWaitingRoomPolling() {
-    setInterval(async () => {
+    this.waitingRoomPollingInterval = setInterval(async () => {
       try {
         // Check if user is still in waiting room or has been approved
         const status = await this.apiService.checkUserStatus(this.roomId, this.identity).toPromise();
@@ -118,7 +377,12 @@ export class RoomComponent implements OnInit, OnDestroy {
           // User has been approved, move them to the room
           this.isInWaitingRoom = false;
           console.log('User has been approved and can join the room!');
-          // You can add logic here to start the video call
+          
+          // Stop polling
+          this.stopWaitingRoomPolling();
+          
+          // Initialize the call
+          await this.initializeCall();
         } else if (status.isWaiting) {
           // User is still waiting
           console.log('User is still waiting for approval...');
@@ -126,6 +390,7 @@ export class RoomComponent implements OnInit, OnDestroy {
           // User not found or room not active
           const response = await this.apiService.getRoom(this.roomId).toPromise();
           if (response && !response.isActive) {
+            this.stopWaitingRoomPolling();
             this.router.navigate(['/']);
           }
         }
@@ -135,9 +400,17 @@ export class RoomComponent implements OnInit, OnDestroy {
     }, 2000); // Check every 2 seconds
   }
 
+  private stopWaitingRoomPolling() {
+    if (this.waitingRoomPollingInterval) {
+      clearInterval(this.waitingRoomPollingInterval);
+      this.waitingRoomPollingInterval = null;
+      console.log('Waiting room polling stopped');
+    }
+  }
+
   private startRoomPolling() {
     if (this.isHost) {
-      setInterval(async () => {
+      this.roomPollingInterval = setInterval(async () => {
         try {
           const result = await this.apiService.getWaitingList(this.roomId).toPromise();
           this.waitingList = result || [];
@@ -145,6 +418,14 @@ export class RoomComponent implements OnInit, OnDestroy {
           console.error('Error fetching waiting list:', error);
         }
       }, 2000);
+    }
+  }
+
+  private stopRoomPolling() {
+    if (this.roomPollingInterval) {
+      clearInterval(this.roomPollingInterval);
+      this.roomPollingInterval = null;
+      console.log('Room polling stopped');
     }
   }
 
@@ -188,6 +469,10 @@ export class RoomComponent implements OnInit, OnDestroy {
 
   async leaveRoom() {
     try {
+      // Stop all polling
+      this.stopWaitingRoomPolling();
+      this.stopRoomPolling();
+      
       await this.communicationService.leaveCall();
       await this.apiService.leaveRoom(this.roomId, this.identity).toPromise();
       this.router.navigate(['/']);
@@ -199,6 +484,10 @@ export class RoomComponent implements OnInit, OnDestroy {
 
   async endRoom() {
     try {
+      // Stop all polling
+      this.stopWaitingRoomPolling();
+      this.stopRoomPolling();
+      
       await this.communicationService.endCall();
       await this.apiService.endRoom(this.roomId).toPromise();
       this.router.navigate(['/']);
@@ -208,3 +497,4 @@ export class RoomComponent implements OnInit, OnDestroy {
     }
   }
 }
+

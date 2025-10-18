@@ -38,6 +38,32 @@
   animation: slideIn 0.3s ease-out;
 }
 
+// Preview styles
+.preview-btn {
+  @apply bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-all duration-300 font-medium;
+}
+
+.preview-btn.active {
+  @apply bg-red-600 hover:bg-red-700;
+}
+
+.preview-container {
+  @apply relative bg-black rounded-lg overflow-hidden;
+  height: 300px;
+}
+
+.preview-video {
+  @apply w-full h-full object-cover;
+}
+
+.preview-video.hidden {
+  display: none;
+}
+
+.preview-placeholder {
+  @apply absolute inset-0 flex items-center justify-center bg-gray-100;
+}
+
 @keyframes slideIn {
   from {
     opacity: 0;
