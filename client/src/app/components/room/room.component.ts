@@ -206,6 +206,9 @@ export class RoomComponent implements OnInit, OnDestroy {
       this.waitForCallConnected().then(async () => {
         console.log('Call is connected, rendering local video...');
         await this.renderLocalVideo(localVideoStream);
+        
+        // Check for existing participants
+        await this.handleExistingParticipants();
       });
 
       // Also try to render video immediately as fallback
@@ -293,19 +296,134 @@ export class RoomComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async getParticipantDisplayName(participant: any): Promise<string> {
+    // Try multiple ways to get the participant name
+    console.log('Getting display name for participant:', participant);
+    
+    // Method 1: Check if displayName is directly available
+    if (participant.displayName && participant.displayName.trim() !== '') {
+      console.log('Found displayName:', participant.displayName);
+      return participant.displayName;
+    }
+    
+    // Method 2: Check if there's a name property
+    if (participant.name && participant.name.trim() !== '') {
+      console.log('Found name:', participant.name);
+      return participant.name;
+    }
+    
+    // Method 3: Try to get name from API using communicationUserId
+    if (participant.identifier && participant.identifier.communicationUserId) {
+      try {
+        console.log('Fetching participant name from API for userId:', participant.identifier.communicationUserId);
+        const response = await this.apiService.getParticipant(this.roomId, participant.identifier.communicationUserId).toPromise();
+        
+        if (response && response.found && response.user && response.user.name) {
+          console.log('Found participant name from API:', response.user.name);
+          return response.user.name;
+        }
+      } catch (error) {
+        console.warn('Failed to fetch participant name from API:', error);
+      }
+      
+      // Fallback to using portion of communicationUserId
+      const userId = participant.identifier.communicationUserId;
+      console.log('Using communicationUserId portion:', userId);
+      return `User ${userId.substring(0, 8)}`;
+    }
+    
+    // Method 4: Check if there's a userPrincipalName in identifier
+    if (participant.identifier && participant.identifier.userPrincipalName) {
+      console.log('Found userPrincipalName:', participant.identifier.userPrincipalName);
+      return participant.identifier.userPrincipalName;
+    }
+    
+    // Method 5: Check if there's a phoneNumber
+    if (participant.identifier && participant.identifier.phoneNumber) {
+      console.log('Found phoneNumber:', participant.identifier.phoneNumber);
+      return participant.identifier.phoneNumber;
+    }
+    
+    // Final fallback
+    console.log('No name found, using default');
+    return 'Unknown Participant';
+  }
+
+  private async handleExistingParticipants() {
+    if (!this.currentCall) return;
+    
+    console.log('Checking for existing participants...');
+    const remoteParticipants = this.currentCall.remoteParticipants;
+    console.log('Existing remote participants:', remoteParticipants);
+    
+    for (const participant of remoteParticipants) {
+      console.log('Processing existing participant:', participant);
+      const participantName = await this.getParticipantDisplayName(participant);
+      console.log('Existing participant name resolved to:', participantName);
+      
+      // Set up participant event handlers
+      this.setupParticipantEventHandlers(participant);
+      
+      // Render participant (with or without video)
+      const videoStream = participant.videoStreams && participant.videoStreams.length > 0 ? participant.videoStreams[0] : null;
+      this.renderRemoteVideo(videoStream, participant.identifier.communicationUserId, participantName);
+    }
+  }
+
+  private setupParticipantEventHandlers(participant: any) {
+    // Handle participant video streams
+    participant.on('videoStreamsUpdated', async (e: any) => {
+      console.log('Participant video streams updated:', e);
+      const participantName = await this.getParticipantDisplayName(participant);
+      
+      e.added.forEach((stream: any) => {
+        console.log('Added participant video stream:', stream);
+        this.renderRemoteVideo(stream, participant.identifier.communicationUserId, participantName);
+      });
+      
+      e.removed.forEach((stream: any) => {
+        console.log('Removed participant video stream:', stream);
+        // Video stream was removed, but keep the participant container with name
+        const videoContainerDiv = document.getElementById(`remoteVideo-${participant.identifier.communicationUserId}`);
+        if (videoContainerDiv) {
+          // Remove video element but keep the container and label
+          const videoElement = videoContainerDiv.querySelector('video');
+          if (videoElement) {
+            videoElement.remove();
+          }
+        }
+      });
+    });
+
+    // Handle participant state changes
+    participant.on('stateChanged', (e: any) => {
+      console.log('Participant state changed:', e);
+    });
+  }
+
   private setupCallEventHandlers() {
     if (!this.currentCall) return;
 
-    this.currentCall.on('remoteParticipantsUpdated', (e: any) => {
+    this.currentCall.on('remoteParticipantsUpdated', async (e: any) => {
       console.log('Remote participants updated:', e);
-      this.participants = e.added.map((p: any) => ({
-        id: p.identifier.communicationUserId,
-        name: p.displayName || 'Unknown'
-      }));
-
       // Handle video streams for each participant
-      e.added.forEach((participant: any) => {
-        this.setupParticipantVideoHandlers(participant);
+      for (const participant of e.added) {
+        console.log('Added participant details:', participant);
+        const participantName = await this.getParticipantDisplayName(participant);
+        console.log('Participant name resolved to:', participantName);
+        
+        // Set up participant event handlers
+        this.setupParticipantEventHandlers(participant);
+        
+        // Render participant (with or without video)
+        const videoStream = participant.videoStreams && participant.videoStreams.length > 0 ? participant.videoStreams[0] : null;
+        this.renderRemoteVideo(videoStream, participant.identifier.communicationUserId, participantName);
+      }
+      e.removed.forEach((participant: any) => {
+        let videoContainerDiv = document.getElementById(`remoteVideo-${participant.identifier.communicationUserId}`);
+        if(videoContainerDiv){
+          videoContainerDiv.remove();
+        }
       });
     });
 
@@ -314,17 +432,10 @@ export class RoomComponent implements OnInit, OnDestroy {
     });
   }
 
-  private setupParticipantVideoHandlers(participant: any) {
-    participant.on('videoStreamsUpdated', (e: any) => {
-      console.log('Participant video streams updated:', e);
-      e.added.forEach((stream: any) => {
-        this.renderRemoteVideo(stream, participant.identifier.communicationUserId);
-      });
-    });
-  }
-
-  private async renderRemoteVideo(remoteVideoStream: any, participantId: string) {
+  private async renderRemoteVideo(remoteVideoStream: any, participantId: string, name: string) {
     try {
+      console.log(`Rendering remote video for participant: ${participantId}, name: ${name}`);
+      
       // Check if video container already exists
       let videoContainerDiv = document.getElementById(`remoteVideo-${participantId}`);
       
@@ -334,34 +445,54 @@ export class RoomComponent implements OnInit, OnDestroy {
         if (remoteVideosContainer) {
           videoContainerDiv = document.createElement('div');
           videoContainerDiv.id = `remoteVideo-${participantId}`;
-          videoContainerDiv.className = 'video-container';
+          videoContainerDiv.className = 'video-container !min-w-[270px]';
           
-          // Add label
+          // Add label first (even without video)
           const label = document.createElement('div');
-          label.className = 'video-label';
-          label.textContent = `Participant ${participantId.substring(0, 8)}`;
-          
+          label.className = 'video-label text-white absolute bottom-0';
+          label.textContent = `${name}`;
           videoContainerDiv.appendChild(label);
+          
           remoteVideosContainer.appendChild(videoContainerDiv);
+          
+          // Only render video if stream is available
+          if (remoteVideoStream) {
+            try {
+              // Clear any existing video content
+              const existingVideo = videoContainerDiv.querySelector('video');
+              if (existingVideo) {
+                existingVideo.remove();
+              }
+              
+              // Create video stream renderer
+              const renderer = new VideoStreamRenderer(remoteVideoStream);
+              const view = await renderer.createView();
+              
+              // Append the view to the container
+              videoContainerDiv.appendChild(view.target);
+              
+              console.log(`Remote video stream rendered for participant: ${participantId}`);
+            } catch (videoError) {
+              console.warn(`Could not render video for participant ${participantId}:`, videoError);
+              // Still show the participant name even if video fails
+            }
+          } else {
+            console.log(`No video stream available for participant: ${participantId}, showing name only`);
+          }
+        }
+      } else {
+        // Update existing container with new name
+        const existingLabel = videoContainerDiv.querySelector('.video-label');
+        if (existingLabel) {
+          existingLabel.textContent = name;
+        } else {
+          const label = document.createElement('div');
+          label.className = 'video-label text-white absolute bottom-0';
+          label.textContent = `${name}`;
+          videoContainerDiv.appendChild(label);
         }
       }
       
-      if (videoContainerDiv && remoteVideoStream) {
-        // Clear any existing video content
-        const existingVideo = videoContainerDiv.querySelector('video');
-        if (existingVideo) {
-          existingVideo.remove();
-        }
-        
-        // Create video stream renderer
-        const renderer = new VideoStreamRenderer(remoteVideoStream);
-        const view = await renderer.createView();
-        
-        // Append the view to the container
-        videoContainerDiv.appendChild(view.target);
-        
-        console.log(`Remote video stream rendered for participant: ${participantId}`);
-      }
     } catch (error) {
       console.error('Error rendering remote video:', error);
     }
@@ -494,6 +625,43 @@ export class RoomComponent implements OnInit, OnDestroy {
     } catch (error) {
       console.error('Error ending room:', error);
       this.router.navigate(['/']);
+    }
+  }
+
+  async refreshParticipantNames() {
+    try {
+      console.log('Refreshing participant names...');
+      
+      if (!this.currentCall) {
+        console.log('No active call, cannot refresh participant names');
+        return;
+      }
+
+      const remoteParticipants = this.currentCall.remoteParticipants;
+      console.log('Refreshing names for participants:', remoteParticipants);
+
+      for (const participant of remoteParticipants) {
+        const participantName = await this.getParticipantDisplayName(participant);
+        console.log(`Refreshed name for participant ${participant.identifier.communicationUserId}: ${participantName}`);
+        
+        // Update the video container label
+        const videoContainerDiv = document.getElementById(`remoteVideo-${participant.identifier.communicationUserId}`);
+        if (videoContainerDiv) {
+          const existingLabel = videoContainerDiv.querySelector('.video-label');
+          if (existingLabel) {
+            existingLabel.textContent = participantName;
+          } else {
+            const label = document.createElement('div');
+            label.className = 'video-label text-white absolute bottom-0';
+            label.textContent = participantName;
+            videoContainerDiv.appendChild(label);
+          }
+        }
+      }
+      
+      console.log('Participant names refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing participant names:', error);
     }
   }
 }

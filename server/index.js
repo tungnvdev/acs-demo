@@ -251,6 +251,55 @@ app.get('/api/rooms/:roomId/waiting', (req, res) => {
   res.json(waitingList);
 });
 
+// Get participant information by communicationUserId
+app.get('/api/rooms/:roomId/participant/:userId', (req, res) => {
+  const { roomId, userId } = req.params;
+  const room = rooms.get(roomId);
+  
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  // Check if user is in participants
+  const participant = room.participants.get(userId);
+  if (participant) {
+    return res.json({
+      found: true,
+      user: participant,
+      location: 'participants'
+    });
+  }
+  
+  // Check if user is in waiting list
+  const waitingUser = room.waitingList.get(userId);
+  if (waitingUser) {
+    return res.json({
+      found: true,
+      user: waitingUser,
+      location: 'waiting'
+    });
+  }
+  
+  // User not found
+  return res.json({
+    found: false,
+    message: 'User not found in room'
+  });
+});
+
+// Get all participants in room
+app.get('/api/rooms/:roomId/participants', (req, res) => {
+  const { roomId } = req.params;
+  const room = rooms.get(roomId);
+  
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  const participants = Array.from(room.participants.values());
+  res.json(participants);
+});
+
 // End room
 app.post('/api/rooms/:roomId/end', (req, res) => {
   const { roomId } = req.params;

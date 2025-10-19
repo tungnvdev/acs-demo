@@ -42,4 +42,12 @@ export class ApiService {
   checkUserStatus(roomId: string, userId: string): Observable<any> {
     return this.http.get(`${this.baseUrl}/rooms/${roomId}/user/${userId}/status`);
   }
+
+  getParticipant(roomId: string, userId: string): Observable<any> {
+    return this.http.get(`${this.baseUrl}/rooms/${roomId}/participant/${userId}`);
+  }
+
+  getAllParticipants(roomId: string): Observable<User[]> {
+    return this.http.get<User[]>(`${this.baseUrl}/rooms/${roomId}/participants`);
+  }
 }

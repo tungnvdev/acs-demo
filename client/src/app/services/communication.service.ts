@@ -81,7 +81,6 @@ export class CommunicationService {
     };
 
     this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
-    await this.currentCall.startVideo(localVideoStream);
     // Set up event handlers for video streams
     this.setupVideoEventHandlers();
     
@@ -97,7 +96,6 @@ export class CommunicationService {
     };
 
     this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
-    await this.currentCall.startVideo(localVideoStream);
     // Set up event handlers for video streams
     this.setupVideoEventHandlers();
     
