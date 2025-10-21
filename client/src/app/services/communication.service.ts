@@ -80,7 +80,7 @@ export class CommunicationService {
       audioOptions: localAudioStream ? { localAudioStreams: [localAudioStream] } : undefined
     };
 
-    this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
+    this.currentCall = await this.callAgent.join({ roomId: roomId }, callOptions);
     // Set up event handlers for video streams
     this.setupVideoEventHandlers();
     
@@ -95,7 +95,7 @@ export class CommunicationService {
       audioOptions: localAudioStream ? { localAudioStreams: [localAudioStream] } : undefined
     };
 
-    this.currentCall = await this.callAgent.join({ groupId: roomId }, callOptions);
+    this.currentCall = await this.callAgent.join({ roomId: roomId }, callOptions);
     // Set up event handlers for video streams
     this.setupVideoEventHandlers();
     

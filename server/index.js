@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { CommunicationIdentityClient } = require('@azure/communication-identity');
+const { RoomsClient } = require('@azure/communication-rooms');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
@@ -57,25 +58,65 @@ if (!connectionString) {
 }
 
 const identityClient = new CommunicationIdentityClient(connectionString);
+const roomsClient = new RoomsClient(connectionString);
 
-// In-memory storage for demo purposes
-const rooms = new Map();
+// In-memory storage for demo purposes (for additional metadata)
+const roomMetadata = new Map();
 const users = new Map();
 
 // Routes
+
+// Get all rooms
+app.get('/api/rooms', async (req, res) => {
+  try {
+    const rooms = [];
+    for await (const room of roomsClient.listRooms()) {
+      const roomData = roomMetadata.get(room.id);
+      rooms.push({
+        id: room.id,
+        validFrom: room.validFrom,
+        validUntil: room.validUntil,
+        hostName: roomData?.hostName || 'Unknown',
+        participantCount: roomData?.participants.size || 0,
+        waitingCount: roomData?.waitingList.size || 0,
+        isActive: roomData?.isActive || false
+      });
+    }
+    res.json(rooms);
+  } catch (error) {
+    console.error('Error listing rooms:', error);
+    res.status(500).json({ error: 'Failed to list rooms' });
+  }
+});
 
 // Create a new room
 app.post('/api/rooms', async (req, res) => {
   try {
     const { hostName } = req.body;
-    const roomId = uuidv4();
     
     // Create identity for host
     const hostIdentity = await identityClient.createUser();
     const hostToken = await identityClient.getToken(hostIdentity, ["voip"]);
     
-    const room = {
-      id: roomId,
+    // Create room using Azure Rooms service
+    const createRoomOptions = {
+      validFrom: new Date(),
+      validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+      participants: [
+        {
+          id: { 
+            communicationUserId: hostIdentity.communicationUserId 
+          },
+          role: 'Presenter' // Host role
+        }
+      ]
+    };
+    
+    const azureRoom = await roomsClient.createRoom(createRoomOptions);
+    
+    // Store additional metadata for our demo
+    const roomData = {
+      id: azureRoom.id,
       hostId: hostIdentity.communicationUserId,
       hostName,
       participants: new Map(),
@@ -85,7 +126,7 @@ app.post('/api/rooms', async (req, res) => {
     };
     
     // Add host to participants
-    room.participants.set(hostIdentity.communicationUserId, {
+    roomData.participants.set(hostIdentity.communicationUserId, {
       id: hostIdentity.communicationUserId,
       name: hostName,
       isHost: true,
@@ -93,12 +134,14 @@ app.post('/api/rooms', async (req, res) => {
       isVideoOn: true
     });
     
-    rooms.set(roomId, room);
+    roomMetadata.set(azureRoom.id, roomData);
     
     res.json({
-      roomId,
+      roomId: azureRoom.id,
       hostToken: hostToken.token,
-      hostIdentity: hostIdentity.communicationUserId
+      hostIdentity: hostIdentity.communicationUserId,
+      validFrom: azureRoom.validFrom,
+      validUntil: azureRoom.validUntil
     });
   } catch (error) {
     console.error('Error creating room:', error);
@@ -112,12 +155,23 @@ app.post('/api/rooms/:roomId/join', async (req, res) => {
     const { roomId } = req.params;
     const { userName, isHost } = req.body;
     
-    const room = rooms.get(roomId);
-    if (!room) {
+    // Check if room exists in Azure
+    let azureRoom;
+    try {
+      azureRoom = await roomsClient.getRoom(roomId);
+    } catch (error) {
       return res.status(404).json({ error: 'Room not found' });
     }
     
-    if (!room.isActive) {
+    // Check if room is still valid
+    const now = new Date();
+    if (now < azureRoom.validFrom || now > azureRoom.validUntil) {
+      return res.status(400).json({ error: 'Room is not active or has expired' });
+    }
+    
+    // Get our metadata
+    const roomData = roomMetadata.get(roomId);
+    if (!roomData || !roomData.isActive) {
       return res.status(400).json({ error: 'Room is not active' });
     }
     
@@ -134,17 +188,28 @@ app.post('/api/rooms/:roomId/join', async (req, res) => {
     };
     
     if (isHost) {
-      // Host joining - add directly to participants
-      room.participants.set(userIdentity.communicationUserId, user);
+      // Host joining - add directly to participants and Azure room
+      roomData.participants.set(userIdentity.communicationUserId, user);
+      
+      // Add to Azure room as Presenter
+      await roomsClient.addOrUpdateParticipants(roomId, [
+        {
+          id: { 
+            communicationUserId: userIdentity.communicationUserId 
+          },
+          role: 'Presenter'
+        }
+      ]);
     } else {
-      // Regular user - add to waiting list
-      room.waitingList.set(userIdentity.communicationUserId, user);
+      // Regular user - add to waiting list (not added to Azure room yet)
+      roomData.waitingList.set(userIdentity.communicationUserId, user);
     }
     
     res.json({
       userToken: userToken.token,
       userIdentity: userIdentity.communicationUserId,
-      isInWaitingRoom: !isHost
+      isInWaitingRoom: !isHost,
+      roomValidUntil: azureRoom.validUntil
     });
   } catch (error) {
     console.error('Error joining room:', error);
@@ -153,68 +218,99 @@ app.post('/api/rooms/:roomId/join', async (req, res) => {
 });
 
 // Get room info
-app.get('/api/rooms/:roomId', (req, res) => {
-  const { roomId } = req.params;
-  const room = rooms.get(roomId);
-  
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
+app.get('/api/rooms/:roomId', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    // Get Azure room info
+    let azureRoom;
+    try {
+      azureRoom = await roomsClient.getRoom(roomId);
+    } catch (error) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // Get our metadata
+    const roomData = roomMetadata.get(roomId);
+    if (!roomData) {
+      return res.status(404).json({ error: 'Room metadata not found' });
+    }
+    
+    res.json({
+      id: roomData.id,
+      hostName: roomData.hostName,
+      participantCount: roomData.participants.size,
+      waitingCount: roomData.waitingList.size,
+      isActive: roomData.isActive,
+      validFrom: azureRoom.validFrom,
+      validUntil: azureRoom.validUntil
+    });
+  } catch (error) {
+    console.error('Error getting room info:', error);
+    res.status(500).json({ error: 'Failed to get room info' });
   }
-  
-  res.json({
-    id: room.id,
-    hostName: room.hostName,
-    participantCount: room.participants.size,
-    waitingCount: room.waitingList.size,
-    isActive: room.isActive
-  });
 });
 
 // Approve user from waiting room
-app.post('/api/rooms/:roomId/approve/:userId', (req, res) => {
-  const { roomId, userId } = req.params;
-  const room = rooms.get(roomId);
-  
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
-  }
-  
-  const user = room.waitingList.get(userId);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found in waiting room' });
-  }
-  
-  // Move user from waiting list to participants
-  room.waitingList.delete(userId);
-  room.participants.set(userId, user);
-  
-  // Mark user as approved
-  user.isApproved = true;
-  user.approvedAt = new Date();
-  
-  res.json({ 
-    success: true, 
-    message: 'User approved successfully',
-    user: {
-      id: user.id,
-      name: user.name,
-      isApproved: true,
-      approvedAt: user.approvedAt
+app.post('/api/rooms/:roomId/approve/:userId', async (req, res) => {
+  try {
+    const { roomId, userId } = req.params;
+    const roomData = roomMetadata.get(roomId);
+    
+    if (!roomData) {
+      return res.status(404).json({ error: 'Room not found' });
     }
-  });
+    
+    const user = roomData.waitingList.get(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found in waiting room' });
+    }
+    
+    // Move user from waiting list to participants
+    roomData.waitingList.delete(userId);
+    roomData.participants.set(userId, user);
+    
+    // Add user to Azure room as Attendee
+    await roomsClient.addOrUpdateParticipants(roomId, [
+      {
+        id: { 
+          communicationUserId: userId 
+        },
+        role: 'Attendee'
+      }
+    ]);
+    
+    // Mark user as approved
+    user.isApproved = true;
+    user.approvedAt = new Date();
+    
+    res.json({ 
+      success: true, 
+      message: 'User approved successfully',
+      user: {
+        id: user.id,
+        name: user.name,
+        isApproved: true,
+        approvedAt: user.approvedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error approving user:', error);
+    res.status(500).json({ error: 'Failed to approve user' });
+  }
 });
 
 // Check user approval status
 app.get('/api/rooms/:roomId/user/:userId/status', (req, res) => {
   const { roomId, userId } = req.params;
-  const room = rooms.get(roomId);
+  const roomData = roomMetadata.get(roomId);
   
-  if (!room) {
+  if (!roomData) {
     return res.status(404).json({ error: 'Room not found' });
   }
   
   // Check if user is in participants (approved)
-  const participant = room.participants.get(userId);
+  const participant = roomData.participants.get(userId);
   if (participant) {
     return res.json({
       isApproved: true,
@@ -224,7 +320,7 @@ app.get('/api/rooms/:roomId/user/:userId/status', (req, res) => {
   }
   
   // Check if user is still in waiting list
-  const waitingUser = room.waitingList.get(userId);
+  const waitingUser = roomData.waitingList.get(userId);
   if (waitingUser) {
     return res.json({
       isApproved: false,
@@ -241,27 +337,27 @@ app.get('/api/rooms/:roomId/user/:userId/status', (req, res) => {
 // Get waiting list
 app.get('/api/rooms/:roomId/waiting', (req, res) => {
   const { roomId } = req.params;
-  const room = rooms.get(roomId);
+  const roomData = roomMetadata.get(roomId);
   
-  if (!room) {
+  if (!roomData) {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  const waitingList = Array.from(room.waitingList.values());
+  const waitingList = Array.from(roomData.waitingList.values());
   res.json(waitingList);
 });
 
 // Get participant information by communicationUserId
 app.get('/api/rooms/:roomId/participant/:userId', (req, res) => {
   const { roomId, userId } = req.params;
-  const room = rooms.get(roomId);
+  const roomData = roomMetadata.get(roomId);
   
-  if (!room) {
+  if (!roomData) {
     return res.status(404).json({ error: 'Room not found' });
   }
   
   // Check if user is in participants
-  const participant = room.participants.get(userId);
+  const participant = roomData.participants.get(userId);
   if (participant) {
     return res.json({
       found: true,
@@ -271,7 +367,7 @@ app.get('/api/rooms/:roomId/participant/:userId', (req, res) => {
   }
   
   // Check if user is in waiting list
-  const waitingUser = room.waitingList.get(userId);
+  const waitingUser = roomData.waitingList.get(userId);
   if (waitingUser) {
     return res.json({
       found: true,
@@ -290,45 +386,70 @@ app.get('/api/rooms/:roomId/participant/:userId', (req, res) => {
 // Get all participants in room
 app.get('/api/rooms/:roomId/participants', (req, res) => {
   const { roomId } = req.params;
-  const room = rooms.get(roomId);
+  const roomData = roomMetadata.get(roomId);
   
-  if (!room) {
+  if (!roomData) {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  const participants = Array.from(room.participants.values());
+  const participants = Array.from(roomData.participants.values());
   res.json(participants);
 });
 
 // End room
-app.post('/api/rooms/:roomId/end', (req, res) => {
-  const { roomId } = req.params;
-  const room = rooms.get(roomId);
-  
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
+app.post('/api/rooms/:roomId/end', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const roomData = roomMetadata.get(roomId);
+    
+    if (!roomData) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // Delete room from Azure
+    await roomsClient.deleteRoom(roomId);
+    
+    // Mark as inactive and remove from metadata
+    roomData.isActive = false;
+    roomMetadata.delete(roomId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error ending room:', error);
+    res.status(500).json({ error: 'Failed to end room' });
   }
-  
-  room.isActive = false;
-  rooms.delete(roomId);
-  
-  res.json({ success: true });
 });
 
 // Leave room
-app.post('/api/rooms/:roomId/leave/:userId', (req, res) => {
-  const { roomId, userId } = req.params;
-  const room = rooms.get(roomId);
-  
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
+app.post('/api/rooms/:roomId/leave/:userId', async (req, res) => {
+  try {
+    const { roomId, userId } = req.params;
+    const roomData = roomMetadata.get(roomId);
+    
+    if (!roomData) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // Check if user is in participants (need to remove from Azure room)
+    const participant = roomData.participants.get(userId);
+    if (participant) {
+      // Remove from Azure room
+      await roomsClient.removeParticipants(roomId, [
+        { 
+          communicationUserId: userId 
+        }
+      ]);
+    }
+    
+    // Remove from our metadata
+    roomData.participants.delete(userId);
+    roomData.waitingList.delete(userId);
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error leaving room:', error);
+    res.status(500).json({ error: 'Failed to leave room' });
   }
-  
-  // Remove from participants or waiting list
-  room.participants.delete(userId);
-  room.waitingList.delete(userId);
-  
-  res.json({ success: true });
 });
 
 app.listen(PORT, () => {
