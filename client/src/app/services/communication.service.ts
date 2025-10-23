@@ -28,6 +28,7 @@ export class CommunicationService {
   private currentCall: any = null;
   private localVideoStream: LocalVideoStream | null = null;
   private localAudioStream: LocalAudioStream | null = null;
+  private isScreenSharing = false;
 
   async initialize(token: string): Promise<void> {
     this.callClient = new CallClient();
@@ -207,6 +208,48 @@ export class CommunicationService {
 
   getLocalAudioStream() {
     return this.localAudioStream;
+  }
+
+  // Screen sharing methods using ACS SDK
+  async startScreenShare(): Promise<boolean> {
+    if (!this.currentCall || this.isScreenSharing) return false;
+    
+    try {
+      await this.currentCall.startScreenSharing();
+      this.isScreenSharing = true;
+      console.log('Screen sharing started successfully');
+      return true;
+    } catch (error) {
+      console.error('Error starting screen share:', error);
+      this.isScreenSharing = false;
+      return false;
+    }
+  }
+
+  async stopScreenShare(): Promise<boolean> {
+    if (!this.currentCall || !this.isScreenSharing) return false;
+    
+    try {
+      await this.currentCall.stopScreenSharing();
+      this.isScreenSharing = false;
+      console.log('Screen sharing stopped successfully');
+      return true;
+    } catch (error) {
+      console.error('Error stopping screen share:', error);
+      return false;
+    }
+  }
+
+  async toggleScreenShare(): Promise<boolean> {
+    if (this.isScreenSharing) {
+      return await this.stopScreenShare();
+    } else {
+      return await this.startScreenShare();
+    }
+  }
+
+  isCurrentlyScreenSharing(): boolean {
+    return this.isScreenSharing;
   }
 
 }

@@ -91,6 +91,23 @@
   @apply bg-red-600 hover:bg-red-700;
 }
 
+.control-btn.screen-sharing {
+  @apply bg-blue-600 hover:bg-blue-700;
+}
+
+.screen-share-container {
+  @apply relative bg-gray-900 rounded-lg overflow-hidden border-2 border-blue-500 min-w-[400px] min-h-[300px];
+}
+
+.loading-spinner {
+  @apply absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-50;
+}
+
+.loading-spinner::after {
+  content: '';
+  @apply w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin;
+}
+
 .error-message {
   @apply mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-md;
   animation: slideIn 0.3s ease-out;

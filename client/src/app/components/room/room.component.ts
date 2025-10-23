@@ -20,6 +20,7 @@ export class RoomComponent implements OnInit, OnDestroy {
   isInWaitingRoom = false;
   isMuted = false;
   isVideoOn = true;
+  isScreenSharing = false;
   participants: any[] = [];
   waitingList: any[] = [];
   errorMessage = '';
@@ -363,10 +364,6 @@ export class RoomComponent implements OnInit, OnDestroy {
       
       // Set up participant event handlers
       this.setupParticipantEventHandlers(participant);
-      
-      // Render participant (with or without video)
-      const videoStream = participant.videoStreams && participant.videoStreams.length > 0 ? participant.videoStreams[0] : null;
-      this.renderRemoteVideo(videoStream, participant.identifier.communicationUserId, participantName);
     }
   }
 
@@ -378,7 +375,18 @@ export class RoomComponent implements OnInit, OnDestroy {
       
       e.added.forEach((stream: any) => {
         console.log('Added participant video stream:', stream);
-        this.renderRemoteVideo(stream, participant.identifier.communicationUserId, participantName);
+        console.log('Stream media stream type:', stream.mediaStreamType);
+        
+        // Check if this is a screen sharing stream
+        if (stream.mediaStreamType === 'ScreenSharing') {
+          // Check if screen share container already exists to avoid duplicates
+          const existingScreenShare = document.getElementById(`screenShare-${participant.identifier.communicationUserId}`);
+          if (!existingScreenShare) {
+            this.subscribeToRemoteVideoStream(stream, participant.identifier.communicationUserId, participantName);
+          }
+        } else {
+          this.renderRemoteVideo(stream, participant.identifier.communicationUserId, participantName);
+        }
       });
       
       e.removed.forEach((stream: any) => {
@@ -416,15 +424,46 @@ export class RoomComponent implements OnInit, OnDestroy {
         this.setupParticipantEventHandlers(participant);
         
         // Render participant (with or without video)
-        const videoStream = participant.videoStreams && participant.videoStreams.length > 0 ? participant.videoStreams[0] : null;
-        this.renderRemoteVideo(videoStream, participant.identifier.communicationUserId, participantName);
+        if (participant.videoStreams && participant.videoStreams.length > 0) {
+          participant.videoStreams.forEach((stream: any) => {
+            if (stream.mediaStreamType === 'ScreenSharing') {
+              // Check if screen share container already exists to avoid duplicates
+              const existingScreenShare = document.getElementById(`screenShare-${participant.identifier.communicationUserId}`);
+              if (!existingScreenShare) {
+                this.subscribeToRemoteVideoStream(stream, participant.identifier.communicationUserId, participantName);
+              }
+            } else {
+              this.renderRemoteVideo(stream, participant.identifier.communicationUserId, participantName);
+            }
+          });
+        }
       }
       e.removed.forEach((participant: any) => {
         let videoContainerDiv = document.getElementById(`remoteVideo-${participant.identifier.communicationUserId}`);
         if(videoContainerDiv){
           videoContainerDiv.remove();
         }
+        let screenShareContainerDiv = document.getElementById(`screenShare-${participant.identifier.communicationUserId}`);
+        if(screenShareContainerDiv){
+          screenShareContainerDiv.remove();
+        }
       });
+    });
+
+    // Handle screen sharing events
+    this.currentCall.on('isScreenSharingOnChanged', async () => {
+      console.log('Screen sharing status changed:', this.currentCall.isScreenSharingOn);
+      this.isScreenSharing = this.currentCall.isScreenSharingOn;
+      
+      // Handle local screen share preview
+      if (this.isScreenSharing) {
+        // Wait a bit for the stream to be available
+        setTimeout(async () => {
+          await this.renderLocalScreenSharePreview();
+        }, 1000);
+      } else {
+        this.removeLocalScreenSharePreview();
+      }
     });
 
     this.currentCall.on('stateChanged', (e: any) => {
@@ -495,6 +534,146 @@ export class RoomComponent implements OnInit, OnDestroy {
       
     } catch (error) {
       console.error('Error rendering remote video:', error);
+    }
+  }
+
+  private async renderLocalScreenSharePreview() {
+    try {
+      console.log('Rendering local screen share preview...');
+      
+      const currentCall = this.communicationService.getCurrentCall();
+      if (!currentCall) return;
+      
+      // Find local screen sharing stream
+      const localScreenSharingStream = currentCall.localVideoStreams.find((stream: any) => {
+        return stream.mediaStreamType === 'ScreenSharing';
+      });
+      
+      if (localScreenSharingStream) {
+        console.log('Found local screen sharing stream:', localScreenSharingStream);
+        
+        // Get the preview container
+        const previewContainer = document.getElementById('localScreenSharePreview');
+        if (previewContainer) {
+          // Clear any existing content
+          previewContainer.innerHTML = '';
+          
+          // Create video stream renderer
+          const renderer = new VideoStreamRenderer(localScreenSharingStream);
+          const view = await renderer.createView();
+          
+          // Append the view to the container
+          previewContainer.appendChild(view.target);
+          
+          console.log('Local screen share preview rendered successfully');
+        } else {
+          console.warn('Local screen share preview container not found');
+        }
+      } else {
+        console.warn('Local screen sharing stream not found');
+      }
+    } catch (error) {
+      console.error('Error rendering local screen share preview:', error);
+    }
+  }
+
+  private removeLocalScreenSharePreview() {
+    try {
+      console.log('Removing local screen share preview...');
+      
+      const previewContainer = document.getElementById('localScreenSharePreview');
+      if (previewContainer) {
+        previewContainer.innerHTML = '';
+        console.log('Local screen share preview removed');
+      }
+    } catch (error) {
+      console.error('Error removing local screen share preview:', error);
+    }
+  }
+
+  private async subscribeToRemoteVideoStream(remoteVideoStream: any, participantId: string, name: string) {
+    try {
+      console.log(`Subscribing to remote video stream for participant: ${participantId}, name: ${name}`);
+      
+      let renderer = new VideoStreamRenderer(remoteVideoStream);
+      let view: any;
+      let remoteVideoContainer = document.createElement('div');
+      remoteVideoContainer.className = 'remote-video-container screen-share-container';
+      remoteVideoContainer.id = `screenShare-${participantId}`;
+
+      let loadingSpinner = document.createElement('div');
+      loadingSpinner.className = 'loading-spinner';
+      
+      // Add label for screen share
+      const label = document.createElement('div');
+      label.className = 'video-label text-white absolute top-2 left-2 bg-blue-600 bg-opacity-80 px-2 py-1 rounded text-sm';
+      label.textContent = `🖥️ ${name} - Chia sẻ màn hình`;
+      remoteVideoContainer.appendChild(label);
+
+      remoteVideoStream.on('isReceivingChanged', () => {
+        try {
+          if (remoteVideoStream.isAvailable) {
+            const isReceiving = remoteVideoStream.isReceiving;
+            const isLoadingSpinnerActive = remoteVideoContainer.contains(loadingSpinner);
+            if (!isReceiving && !isLoadingSpinnerActive) {
+              remoteVideoContainer.appendChild(loadingSpinner);
+            } else if (isReceiving && isLoadingSpinnerActive) {
+              remoteVideoContainer.removeChild(loadingSpinner);
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      const createView = async () => {
+        // Create a renderer view for the remote video stream.
+        view = await renderer.createView();
+        // Attach the renderer view to the UI.
+        remoteVideoContainer.appendChild(view.target);
+        
+        // Add to remote videos container
+        const remoteVideosContainer = document.getElementById('remoteVideos');
+        if (remoteVideosContainer) {
+          remoteVideosContainer.appendChild(remoteVideoContainer);
+        }
+      }
+
+      // Remote participant has switched video on/off
+      remoteVideoStream.on('isAvailableChanged', async () => {
+        try {
+          if (remoteVideoStream.isAvailable) {
+            await createView();
+          } else {
+            if (view) {
+              view.dispose();
+            }
+            const container = document.getElementById(`screenShare-${participantId}`);
+            if (container && container.parentNode) {
+              container.parentNode.removeChild(container);
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      // Remote participant has video on initially.
+      if (remoteVideoStream.isAvailable) {
+        try {
+          await createView();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      
+      console.log(`Initial stream size: height: ${remoteVideoStream.size.height}, width: ${remoteVideoStream.size.width}`);
+      remoteVideoStream.on('sizeChanged', () => {
+        console.log(`Remote video stream size changed: new height: ${remoteVideoStream.size.height}, new width: ${remoteVideoStream.size.width}`);
+      });
+      
+    } catch (error) {
+      console.error('Error subscribing to remote video stream:', error);
     }
   }
 
@@ -585,6 +764,28 @@ export class RoomComponent implements OnInit, OnDestroy {
       }
     } catch (error) {
       console.error('Error toggling video:', error);
+    }
+  }
+
+  async toggleScreenShare() {
+    try {
+      const success = await this.communicationService.toggleScreenShare();
+      if (success) {
+        this.isScreenSharing = this.communicationService.isCurrentlyScreenSharing();
+        console.log('Screen sharing toggled:', this.isScreenSharing);
+        
+        // Render local screen share preview if started
+        if (this.isScreenSharing) {
+          await this.renderLocalScreenSharePreview();
+        } else {
+          this.removeLocalScreenSharePreview();
+        }
+      } else {
+        this.errorMessage = 'Không thể bật/tắt chia sẻ màn hình. Vui lòng thử lại.';
+      }
+    } catch (error) {
+      console.error('Error toggling screen share:', error);
+      this.errorMessage = 'Không thể bật/tắt chia sẻ màn hình. Vui lòng thử lại.';
     }
   }
 

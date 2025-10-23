@@ -70,6 +70,17 @@
         </div>
       </div>
 
+      <!-- Local Screen Share Preview -->
+      <div *ngIf="isScreenSharing" class="video-container screen-share-container">
+        <div
+          id="localScreenSharePreview"
+          class="video-element"
+        ></div>
+        <div class="video-label">
+          🖥️ {{ userName }} - Chia sẻ màn hình
+        </div>
+      </div>
+
       <!-- Remote Videos Container -->
       <div id="remoteVideos" class="remote-videos-container">
         <!-- Remote videos will be dynamically added here -->
@@ -140,6 +151,14 @@
       [title]="isVideoOn ? 'Tắt camera' : 'Bật camera'"
     >
       {{ isVideoOn ? '📹' : '📷' }}
+    </button>
+
+    <button
+      (click)="toggleScreenShare()"
+      [class]="isScreenSharing ? 'control-btn screen-sharing' : 'control-btn'"
+      [title]="isScreenSharing ? 'Dừng chia sẻ màn hình' : 'Bắt đầu chia sẻ màn hình'"
+    >
+      {{ isScreenSharing ? '🖥️' : '📺' }}
     </button>
 
     <button
